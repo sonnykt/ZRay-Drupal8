@@ -76,7 +76,7 @@ class Drupal8 {
             'Line Number' => $lineno,
             'Route' => array(
               'Name' => $request->get('_route'),
-              'Params' => $request->get('_routeparams'),
+              'Object' => (array) $request->get('_route_object'),
               ),
             'Session' => ($request->getSession() ? 'yes' : 'no'),
             'Locale' => $request->getLocale(),
@@ -205,6 +205,111 @@ class Drupal8 {
     return is_object($t) && ($t instanceof Closure);
   }
 
+  public function blockViewBuilderPreRenderExit($context, &$storage) {
+    $build = $context['functionArgs'][0];
+
+    $storage['Blocks'][$build['#id']] = $build;
+  }
+
+  public function viewsPreRenderExit($context, &$storage) {
+    $view = $context['functionArgs'][0];
+
+    $storage['Views'][$view->storage->id()] = array(
+      'view_name' => $view->storage->id(),
+      'view_display_id' => $view->current_display,
+      'view_args' => $view->args,
+      'view_base_path' => $view->getPath(),
+      'view_dom_id' => $view->dom_id,
+      'pager_element' => isset($view->pager) ? $view->pager->getPagerId() : 0,
+      'View Object' => $this->simplifyData($view),
+    );
+  }
+
+  public function drupalServiceExit($context, &$storage) {
+    static $serviceIds = array();
+    $id = $context['functionArgs'][0];
+    if (empty($serviceIds[$id])) {
+      $serviceIds[$id] = $id;
+      $returnValue = $context['returnValue'];
+      $storage['Services'][$id] = array(
+        'ID' => $id,
+        'Class' => !is_object($returnValue) ? $returnValue : get_class($returnValue),
+      );
+    }
+  }
+
+  public function moduleHandlerLoadExit($context, &$storage) {
+    $name = $context['functionArgs'][0];
+    $storage['Modules'][$name] = array(
+      'Name' => $name,
+    );
+  }
+
+  public function moduleHandlerInvokeExit($context, &$storage) {
+    $module = $context['functionArgs'][0];
+    $hook = $context['functionArgs'][1];
+    if (empty($module) || empty($hook)) {
+      return;
+    }
+
+    $args = empty($context['functionArgs'][2]) ? NULL : $context['functionArgs'][2];
+    $storage['Hooks'][$module . '_' . $hook] = $this->simplifyData($args);
+  }
+
+  private function simplifyData($data, $depth = 0, $maxDepth = 5) {
+    $return = NULL;
+    if (is_array($data) || is_object($data)) {
+      foreach ($data as $key => $value) {
+        if ($depth <= $maxDepth) {
+          $return[$key] = $this->simplifyData($value, $depth + 1);
+        }
+        else {
+          $return[$key] = 'N/A: Reached limit.';
+        }
+      }
+    }
+    else {
+      $return = $data;
+    }
+    return $return;
+  }
+
+  public function logChannelLogExit($context, &$storage) {
+    $logLevels = array(
+      0 => 'EMERGENCY',
+      1 => 'ALERT',
+      2 => 'CRITICAL',
+      3 => 'ERROR',
+      4 => 'WARNING',
+      5 => 'NOTICE',
+      6 => 'INFO',
+      7 => 'DEBUG',
+    );
+
+    $level = $context['functionArgs'][0];
+    $message = $context['functionArgs'][1];
+    if (empty($level) || empty($message)) {
+      return;
+    }
+
+    $logContext = empty($context['functionArgs'][2]) ? NULL : $context['functionArgs'][2];
+    $storage['Logs'][$logLevels[$level]] = array(
+      'Message' => $message,
+      'Context' => $logContext,
+    );
+  }
+
+  public function formBuilderGetFormExit($context, &$storage) {
+    $form = $context['returnValue'];
+
+    $storage['Forms'][$form['#form_id']] = array(
+      '#id' => $form['#id'],
+      '#form_id' => $form['#form_id'],
+      '#attributes' => $form['#attributes'],
+      '#build_id' => $form['#build_id'],
+      'Form Structure' => $this->simplifyData($form),
+    );
+  }
 }
 
 $zre = new \ZRayExtension("drupal8");
@@ -219,10 +324,17 @@ $zre->setMetadata(array(
 $zre->setEnabledAfter('Drupal\Core\DrupalKernel::handle');
 
 //$zre->traceFunction("Symfony\Component\HttpKernel\Kernel::terminate", function(){}, array($zrayDrupal, 'terminateExit'));
-//$zre->traceFunction("Symfony\Component\HttpKernel\HttpKernel::handle", function(){}, array($zrayDrupal, 'handleRequestExit'));
+$zre->traceFunction('Drupal\Core\DrupalKernel::handle', function(){}, array($zrayDrupal, 'handleRequestExit'));
+$zre->traceFunction('Drupal\block\BlockViewBuilder::preRender', function(){}, array($zrayDrupal, 'blockViewBuilderPreRenderExit'));
+$zre->traceFunction('views_views_pre_render', function(){}, array($zrayDrupal, 'viewsPreRenderExit'));
+$zre->traceFunction('Drupal::service', function(){}, array($zrayDrupal, 'drupalServiceExit'));
+$zre->traceFunction('Drupal\Core\Extension\ModuleHandler::load', function(){}, array($zrayDrupal, 'moduleHandlerLoadExit'));
+$zre->traceFunction('Drupal\Core\Extension\ModuleHandler::invoke', function(){}, array($zrayDrupal, 'moduleHandlerInvokeExit'));
+$zre->untraceFunction('Drupal\Core\Extension\ModuleHandler::invokeAll');
+$zre->traceFunction('Drupal\dblog\Logger\DbLog::log', function(){}, array($zrayDrupal, 'logChannelLogExit'));
+$zre->traceFunction('Drupal\Core\Form\FormBuilder::getForm', function(){}, array($zrayDrupal, 'formBuilderGetFormExit'));
 //$zre->traceFunction("Symfony\Component\EventDispatcher\EventDispatcher::dispatch", function(){}, array($zrayDrupal, 'eventDispatchExit'));
 //$zre->traceFunction("AppKernel::registerBundles", function(){}, array($zrayDrupal, 'registerBundlesExit'));
-//$zre->traceFunction("Monolog\Logger::addRecord", function(){}, array($zrayDrupal, 'logAddRecordExit'));
 $zre->traceFunction("call_user_func", function(){}, array($zrayDrupal, 'callUserFuncExit'));
 
 

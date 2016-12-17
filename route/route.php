@@ -1,6 +1,6 @@
 <?php
 
-	class DrupalPlugin extends ZAppsPlugin {
+	class Drupal8Plugin extends ZAppsPlugin {
 		
 		public function resolveMVCEnter($context) {
 			
@@ -31,5 +31,5 @@
 		private $resolved = false;		
 	}
 	
-	$drupalPlugin = new DrupalPlugin();
+	$drupalPlugin = new Drupal8Plugin();
 	$drupalPlugin->setWatchedFunction("Symfony\Component\HttpKernel\HttpKernel::handle", array($drupalPlugin, "resolveMVCEnter"), array($drupalPlugin, "resolveMVCLeave"));
